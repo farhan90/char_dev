@@ -22,35 +22,52 @@ int dev_open(struct inode *i, struct file *file){
 	return 0;
 }
 
+int dev_release(struct inode *i, struct file *filp){
+	printk("FARHAN: Releasing my char device\n");
+	return 0;
+}
+
 ssize_t dev_read(struct file *f, char __user *ubuf, 
 			size_t len,loff_t *off){
 	
 	struct timespec ts;
 	int ret=0;
 	printk("FARHAN: Reading my char device\n");
-
+	
+	/* End of file */
+	if (*off>data_buff_len){
+		printk("FARHAN: End of file reached\n");
+		goto out;
+	}
+	data_buff=kmalloc(data_buff_len,GFP_KERNEL);
+	if (!data_buff){
+		printk("FARHAN: No memory\n");
+		ret=-ENOMEM;
+		goto out;
+	}
 	ts=current_kernel_time();
 	
 	ret=snprintf(data_buff,data_buff_len,
 				"Current Kernel Time: %lu \n",ts.tv_sec);
-	if(copy_to_user(ubuf,data_buff,data_buff_len)<0){
-		printk("FARHAN: Failed to copy to user\n");
-		kfree(data_buff);
-		return -1;
+
+	if(ret<0){
+		printk("FARHAN: snprintf failed\n");
+		goto free_buff;
 	}
-		
+
+	if(copy_to_user(ubuf,data_buff,len)){
+		printk("FARHAN: Failed to copy to user\n");
+		ret=-1;
+		goto free_buff;
+	}
+	*off+=len;	
+
+free_buff:
+	kfree(data_buff);
+
+out:	
 	return ret;
 
-}
-
-static int init_data(void){
-	
-	data_buff=kmalloc(data_buff_len,GFP_KERNEL);
-	if (!data_buff){
-		printk("FARHAN: No memory\n");
-		return -ENOMEM;
-	}
-	return 0;
 }
 
 /* Defining file operations of my device */
@@ -58,6 +75,7 @@ static struct file_operations dev_fops={
 	.owner=THIS_MODULE,
 	.open=dev_open,
 	.read=dev_read,
+	.release=dev_release,
 };
 
 static int mydev_init(void){
@@ -89,10 +107,6 @@ static int mydev_init(void){
 		goto rm_cdev;
 	}
 
-	if(init_data()<0){
-		printk("FARHAN: Error init data\n");
-		goto rm_cdev;
-	}
 	printk("FARHAN : Finished registering the device\n");
 	return 0;	
 
@@ -115,10 +129,7 @@ static void mydev_exit(void){
 	cdev_del(&c_dev);
 	device_destroy(cl,dev);
 	class_destroy(cl);
-	unregister_chrdev_region(dev,1);
-	if(data_buff){
-		kfree(data_buff);
-	}	
+	unregister_chrdev_region(dev,1);	
 	return;
 }
 
